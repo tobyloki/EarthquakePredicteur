@@ -1,8 +1,9 @@
 import streamlit as st
-import pandas as pd
 import time
 from PIL import Image
-
+from catboost import CatBoostRegressor
+import pandas as pd
+import numpy as np
 
 st.title('Earthquake Prédicteur')
 
@@ -80,21 +81,78 @@ st.info('- https://catboost.ai/en/docs/concepts/python-reference_catboost_select
 st.subheader('Model selection')
 st.success('Catboost\n- Gradient boosting algorithm')
 
-st.header('Demo application')
+st.subheader('Model metrics')
 
-st.markdown(f'Training model accuracy: `{int(0.99*100)}%`')
-
-st.warning('1. Uploade a csv file containing the acoustic data (typically around 150,000 data points)\n2. The time til\' the next predicted earthquake will be shown below in seconds.')
-
-
-uploaded_file = st.file_uploader("Choose a file")
-if uploaded_file is not None:
-    dataframe = pd.read_csv(uploaded_file)
-    st.write(dataframe)
+metrics = pd.read_csv('EarthquakeModelMetrics.csv').iloc[0]
+score = metrics[0] * 100
+mae = metrics[1]
 
 with st.container():
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(f'##### Time til\' next earthquake: `{5.61}s`')
+        st.metric(label="Accuracy", value=f"{score:.2f}%")
     with col2:
-        st.markdown(f'##### Confidence: `{int(0.86*100)}%`')
+        st.metric(label="Loss (MAE)", value=f"{mae:.4f}")
+
+st.header('Demo application')
+
+model = CatBoostRegressor()
+model.load_model('EarthquakeModel.cbm')
+
+def gen_features(X):
+    strain = []
+    strain.append(X.mean())
+    strain.append(X.std())
+    strain.append(X.min())
+    strain.append(X.max())
+    strain.append(X.kurtosis())
+    strain.append(X.skew())
+    strain.append(np.quantile(X,0.95))
+    strain.append(np.quantile(X,0.90))
+    strain.append((X.loc[abs(X - X.mean()) < 20]).kurtosis()) # truncated kurtosis 
+    strain.append(np.quantile(X,0.75) - np.quantile(X,0.25)) #iqr
+    ### std_nopeak: https://stackoverflow.com/questions/51006163/pandas-how-to-detect-the-peak-points-outliers-in-a-dataframe
+    df = X.copy(deep = True) #temp df
+    from scipy import stats
+    df_Z = df[(np.abs(stats.zscore(df)) < 2.0)] # Use z-score of 2 to remove peaks
+    ix_keep = df_Z.index
+    df_keep = df.loc[ix_keep] # Subset the raw dataframe with the indexes you'd like to keep
+    strain.append(df_keep.std())
+    ### mfcc - https://www.kaggle.com/ilu000/1-private-lb-kernel-lanl-lgbm/
+    # import librosa
+    # mfcc = librosa.feature.mfcc(X.values)
+    # strain.append(mfcc.mean(axis=1))
+    ### power spectrum
+    from scipy.signal import find_peaks, periodogram
+    fs = 1.0
+    f, Pxx_spec = periodogram(X, fs, 'flattop')
+    strain.append(sum(Pxx_spec)/len(Pxx_spec)) #mean!
+    # Peaks and rolling std
+    strain.append(len(find_peaks(X, height=100)[0])) # peak count
+    strain.append(np.quantile(X.rolling(50).std().dropna(), 0.2)) # rolling stdev
+    return pd.Series(strain)
+
+
+st.warning('1. Uploade a csv file containing the acoustic data (typically around 150,000 data points)\n2. The time til\' the next predicted earthquake will be shown below in seconds.')
+
+preds = 0
+
+uploaded_file = st.file_uploader("Choose a file")
+if uploaded_file is not None:
+    test = pd.read_csv(uploaded_file)
+    st.write(test)
+
+    X_test = pd.DataFrame()
+    y_test = pd.Series(dtype=np.float64)
+    ch = gen_features(test['acoustic_data'])
+    X_test = X_test.append(ch, ignore_index=True)
+
+    # Making prediction 
+    preds = model.predict(X_test)[0]
+
+with st.container():
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(f'##### Time til\' next earthquake: `{preds:.2f}s`')
+    # with col2:
+    #     st.markdown(f'##### Confidence: `{int(0.86*100)}%`')

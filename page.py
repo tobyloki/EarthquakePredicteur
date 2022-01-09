@@ -95,6 +95,7 @@ with st.container():
 
 st.subheader('Feature selection')
 st.success('##### Catboost\'s `select_features`\n- Select the best features and drop harmful features from the dataset.\n- Removes complexity and increases interpretability\n- Catboost utilizes a function called select_features that allows it to take in a collection of input training data and possible features, and then returns back which features in the most reliable and should be selected for use in this model after a series of many iterations. In addition, it also makes an effort to avoid overfitting and monitors changes in metrics.')
+st.success('##### Most important features\n- mean\n- truncated kurtosis\n- iqr\n- std no peak\n- peak count\n- 20th percentile rolling window std\n- 80th percentile rolling window std')
 st.info('- https://catboost.ai/en/docs/concepts/python-reference_catboost_select_features')
 
 st.subheader('Model selection')
@@ -139,7 +140,7 @@ def gen_features(X):
     strain.append(df_keep.std())
     ### mfcc - https://www.kaggle.com/ilu000/1-private-lb-kernel-lanl-lgbm/
     # import librosa
-    # mfcc = librosa.feature.mfcc(X.values)
+    # mfcc = librosa.feature.mfcc(X.astype(float).values)
     # strain.append(mfcc.mean(axis=1))
     ### power spectrum
     from scipy.signal import find_peaks, periodogram
@@ -149,12 +150,14 @@ def gen_features(X):
     # Peaks and rolling std
     strain.append(len(find_peaks(X, height=100)[0])) # peak count
     strain.append(np.quantile(X.rolling(50).std().dropna(), 0.2)) # rolling stdev
+    strain.append(np.quantile(X.rolling(50).std().dropna(), 0.8))
     return pd.Series(strain)
 
 
 st.warning('1. Uploade a csv file containing the acoustic data (typically around 150,000 data points)\n2. The time til\' the next predicted earthquake will be shown below in seconds.')
 
 preds = 0
+ttf = 0
 
 uploaded_file = st.file_uploader("Choose a file")
 if uploaded_file is not None:
@@ -169,4 +172,7 @@ if uploaded_file is not None:
     # Making prediction 
     preds = model.predict(X_test)[0]
 
-st.markdown(f'##### Time til\' next earthquake: `{preds:.2f}s`')
+    ttf = test['time_to_failure'].mean()
+
+st.markdown(f'##### Time til\' next earthquake (actual): `{ttf:.2f}s`')
+st.markdown(f'##### Time til\' next earthquake (predicted): `{preds:.2f}s`')
